@@ -95,7 +95,7 @@ Tentamos **tudo** de captura de rede e falhou — porque o app é blindado em ca
 
 ### Device
 
-- **Android arm64 com ROOT.** Testado: **Moto G84 (`cancunf`), Android 15, KernelSU.**
+- **Android arm64 com ROOT.** Testado: **Moto G54 (`cancunf`), Android 15, KernelSU.**
   - `su -c id -u` tem que retornar `0`.
   - Stack KernelSU do device de teste (presente, não necessariamente toda obrigatória): `susfs_manager`, `zygisksu`, `zygisk_lsposed`, `playintegrityfix`, `tricky_store`. **O decisivo é root + Frida 17.6.1 + SELinux permissive** — não foi preciso CA/SSL/proxy.
 - **NÃO precisa**: CA do mitmproxy, módulo de unpinning, WireGuard, iptables, HideMyApplist. (Tudo isso era da era *"captura de rede"*, que não usamos mais.)
