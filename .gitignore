@@ -1,0 +1,22 @@
+# ── Binários do Frida (baixados/gerados pelo setup.ps1) ───────────────
+# O setup baixa o frida-server das releases oficiais e gera o 'fserver'.
+# Não versionamos esses binários (15–51 MB, regeneráveis).
+fserver
+frida-server-*.xz
+*.so
+
+# ── Dump bruto da heap (acumulador gerado a cada execução) ────────────
+heap_all.jsonl
+
+# ── Saídas opcionais / temporários ────────────────────────────────────
+# (restaurantes.json e restaurantes_full.json SÃO versionados como exemplo)
+*.tmp
+*.log
+__pycache__/
+*.pyc
+
+# ── SO / editor ───────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
