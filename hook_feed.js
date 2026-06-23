@@ -34,31 +34,36 @@ Java.perform(function () {
         try { var f = FOS.$new(OUT, true); f.write(JString.$new(jsonl + '\n').getBytes('UTF-8')); f.close(); } catch (e) {}
     }
 
-    var seen = {}; // evita re-choose da mesma classe em loaders diferentes nesta sessão
+    function scan() {
+        var seen = {};
+        Java.enumerateClassLoaders({
+            onMatch: function (loader) {
+                var f;
+                try { f = Java.ClassFactory.get(loader); } catch (e) { return; }
+                var gson = null;
+                try { gson = f.use('com.google.gson.Gson').$new(); } catch (e) {}
+                if (!gson) return;
+                ENT.forEach(function (cn) {
+                    if (seen[cn]) return;
+                    try { f.use(cn); } catch (e) { return; }
+                    try {
+                        f.choose(cn, {
+                            onMatch: function (inst) {
+                                try {
+                                    var j = gson.toJson(inst);
+                                    if (j && j.length > 100 && j.indexOf('shopId') >= 0) append(j);
+                                } catch (e) {}
+                            },
+                            onComplete: function () { seen[cn] = true; }
+                        });
+                    } catch (e) {}
+                });
+            },
+            onComplete: function () {}
+        });
+    }
 
-    Java.enumerateClassLoaders({
-        onMatch: function (loader) {
-            var f;
-            try { f = Java.ClassFactory.get(loader); } catch (e) { return; }
-            var gson = null;
-            try { gson = f.use('com.google.gson.Gson').$new(); } catch (e) {}
-            if (!gson) return;
-            ENT.forEach(function (cn) {
-                if (seen[cn]) return;
-                try { f.use(cn); } catch (e) { return; } // este loader tem a classe?
-                try {
-                    f.choose(cn, {
-                        onMatch: function (inst) {
-                            try {
-                                var j = gson.toJson(inst);
-                                if (j && j.length > 100 && j.indexOf('shopId') >= 0) append(j);
-                            } catch (e) {}
-                        },
-                        onComplete: function () { seen[cn] = true; }
-                    });
-                } catch (e) {}
-            });
-        },
-        onComplete: function () {}
-    });
+    // scan imediato + re-varre a cada 3s enquanto o frida estiver attached
+    scan();
+    setInterval(function () { Java.perform(scan); }, 3000);
 });
