@@ -18,7 +18,13 @@
 param(
     [int]$Cycles = 8,
     [int]$SwipesPerCycle = 6,
-    [int]$ScanSeconds = 10
+    [int]$ScanSeconds = 10,
+    [string]$DeviceId = '99_food_app',
+    [string]$PointId  = '',
+    [string]$Lat      = '',
+    [string]$Lng      = '',
+    [string]$CityId   = '',
+    [string]$PoiId    = ''
 )
 $ErrorActionPreference = 'Continue'
 $adb  = 'adb'
@@ -59,12 +65,7 @@ if (-not $apid) {
 if (-not $apid) { Write-Error "Nao consegui abrir o $PKG. Verifique se esta instalado/logado."; exit 1 }
 Step "App $PKG pid=$apid"
 
-# 5) garante a aba COMIDA (toca no tab central inferior) e espera o feed
-Step "Indo para a aba Comida..."
-& $adb shell input tap $x ([int]($h * 0.93)) 2>$null
-Start-Sleep -Seconds 6
-
-# 6) limpa acumulador
+# 5) limpa acumulador
 & $adb shell su -c "rm -f $HEAP" 2>$null
 
 # 6) LOOP autoscroll + heap-scan
@@ -90,8 +91,43 @@ for ($c = 1; $c -le $Cycles; $c++) {
 & $adb shell su -c "cp $HEAP /sdcard/heap_all.jsonl; chmod 666 /sdcard/heap_all.jsonl" 2>$null
 & $adb pull /sdcard/heap_all.jsonl "$HERE\heap_all.jsonl" 2>$null | Out-Null
 
-# 8) consolida
+# 8) le coords do ponto de entrega (AddressStorage binary) + cityId (routing_location_cache)
+if ((-not $Lat) -or (-not $Lng)) {
+    # AddressStorage guarda o POI de entrega como IEEE 754 doubles em binario base64
+    $addrXml = (& $adb shell su -c "cat '/data/data/$PKG/shared_prefs/com.didi.soda.address.manager.AddressStorage.xml'" 2>$null) -join ""
+    if ($addrXml -match '<string name="Storage.Key">([^<]+)</string>') {
+        $b64 = $Matches[1].Trim() -replace '\s','' -replace '&#10;',''
+        try {
+            $bytes = [Convert]::FromBase64String($b64)
+            # varre procurando par (lat, lng) valido para o Brasil
+            for ($i = 0; $i -le $bytes.Length - 16; $i++) {
+                $dLat = [BitConverter]::ToDouble($bytes, $i)
+                $dLng = [BitConverter]::ToDouble($bytes, $i + 8)
+                if ($dLat -lt -3 -and $dLat -gt -35 -and $dLng -lt -30 -and $dLng -gt -75) {
+                    $Lat = "$dLat"; $Lng = "$dLng"; break
+                }
+            }
+        } catch { }
+    }
+}
+if (-not $CityId) {
+    $routeXml = (& $adb shell su -c "cat '/data/data/$PKG/shared_prefs/routing_location_cache.xml'" 2>$null) -join ""
+    if ($routeXml -match 'lCity[^>]*>([^<]+)<') { $CityId = $Matches[1].Trim() }
+}
+if (-not $PointId -and $Lat -and $Lng) { $PointId = "${Lat}_${Lng}" }
+Step "Coords: lat=$Lat  lng=$Lng  cityId=$CityId  point_id=$PointId"
+
+# 9) consolida
 Write-Host ""
-python "$HERE\consolidate.py" "$HERE"
+python "$HERE\consolidate.py" "$HERE" "$Lat" "$Lng" "$CityId"
 Write-Host ""
 Step "PRONTO -> $HERE\restaurantes.json  e  restaurantes_full.json"
+
+# 10) envia pro Tinybird
+if ($Lat -and $Lng) {
+    Step "Enviando pro Tinybird..."
+    & "$HERE\tinybird_send.ps1" -HeapPath "$HERE\heap_all.jsonl" -DeviceId $DeviceId -PointId $PointId -Lat $Lat -Lng $Lng -CityId $CityId -PoiId $PoiId
+    Step "tinybird_send concluido (exit=$LASTEXITCODE)"
+} else {
+    Write-Host "[!] Coords ausentes - tinybird_send pulado." -ForegroundColor Yellow
+}

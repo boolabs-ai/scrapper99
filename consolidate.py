@@ -12,7 +12,10 @@ Uso: python consolidate.py <dir>
 """
 import json, os, re, sys
 
-d = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
+d      = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
+pt_lat = sys.argv[2] if len(sys.argv) > 2 else ''
+pt_lng = sys.argv[3] if len(sys.argv) > 3 else ''
+pt_cid = sys.argv[4] if len(sys.argv) > 4 else ''
 shops_clean = {}
 shops_full = {}
 
@@ -58,6 +61,9 @@ def add_shop(o):
         'businessType': o.get('businessType'),
         'url': o.get('url'),
         'shopImg': o.get('shopImg'),
+        'point_lat': pt_lat or None,
+        'point_lng': pt_lng or None,
+        'point_city_id': pt_cid or None,
     }
 
 def walk(o):
