@@ -24,7 +24,8 @@ param(
     [string]$Lat      = '',
     [string]$Lng      = '',
     [string]$CityId   = '',
-    [string]$PoiId    = ''
+    [string]$PoiId    = '',
+    [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
 $adb  = 'adb'
@@ -91,29 +92,53 @@ for ($c = 1; $c -le $Cycles; $c++) {
 & $adb shell su -c "cp $HEAP /sdcard/heap_all.jsonl; chmod 666 /sdcard/heap_all.jsonl" 2>$null
 & $adb pull /sdcard/heap_all.jsonl "$HERE\heap_all.jsonl" 2>$null | Out-Null
 
-# 8) le coords do ponto de entrega (AddressStorage binary) + cityId (routing_location_cache)
-if ((-not $Lat) -or (-not $Lng)) {
-    # AddressStorage guarda o POI de entrega como IEEE 754 doubles em binario base64
-    $addrXml = (& $adb shell su -c "cat '/data/data/$PKG/shared_prefs/com.didi.soda.address.manager.AddressStorage.xml'" 2>$null) -join ""
-    if ($addrXml -match '<string name="Storage.Key">([^<]+)</string>') {
-        $b64 = $Matches[1].Trim() -replace '\s','' -replace '&#10;',''
-        try {
-            $bytes = [Convert]::FromBase64String($b64)
-            # varre procurando par (lat, lng) valido para o Brasil
-            for ($i = 0; $i -le $bytes.Length - 16; $i++) {
-                $dLat = [BitConverter]::ToDouble($bytes, $i)
-                $dLng = [BitConverter]::ToDouble($bytes, $i + 8)
-                if ($dLat -lt -3 -and $dLat -gt -35 -and $dLng -lt -30 -and $dLng -gt -75) {
-                    $Lat = "$dLat"; $Lng = "$dLng"; break
+# 8) le o POI de entrega (AddressStorage) via parse_address.py -> poiId/cityId/city/addressAll reais
+$City = ''; $AddressAll = ''; $Neighborhood = ''; $County = ''; $CountryCode = 'BR'
+$tmpAddr = Join-Path $HERE '_addrstore.xml'
+(& $adb shell su -c "cat '/data/data/$PKG/shared_prefs/com.didi.soda.address.manager.AddressStorage.xml'" 2>$null) -join "`n" | Set-Content -Path $tmpAddr -Encoding UTF8
+$prevEnc = [Console]::OutputEncoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$poiJson = python "$HERE\parse_address.py" $tmpAddr 2>$null
+[Console]::OutputEncoding = $prevEnc
+$poi = $null
+if ($LASTEXITCODE -eq 0 -and $poiJson) { $poi = $poiJson | ConvertFrom-Json -ErrorAction SilentlyContinue }
+
+if ($poi) {
+    if (-not $Lat)    { $Lat    = "$($poi.lat)" }
+    if (-not $Lng)    { $Lng    = "$($poi.lng)" }
+    if (-not $CityId) { $CityId = "$($poi.cityId)" }
+    if (-not $PoiId)  { $PoiId  = "$($poi.poiId)" }
+    $City         = "$($poi.city)"
+    $AddressAll   = "$($poi.addressAll)"
+    $Neighborhood = "$($poi.neighborhood)"
+    $County       = "$($poi.county)"
+    if ($poi.countryCode) { $CountryCode = "$($poi.countryCode)" }
+    Step "POI (AddressStorage): poiId=$PoiId  cityId=$CityId  city=$City  addr=$AddressAll"
+} else {
+    # FALLBACK: decode falhou -> doubles inline + cityId do routing_location_cache + poiId sintetico
+    Write-Host "[!] decode AddressStorage falhou - usando fallback (coords inline + routing_location_cache)." -ForegroundColor Yellow
+    if ((-not $Lat) -or (-not $Lng)) {
+        $addrXml = (Get-Content $tmpAddr -Raw -ErrorAction SilentlyContinue)
+        if ($addrXml -match '<string name="Storage.Key">([^<]+)</string>') {
+            $b64 = $Matches[1].Trim() -replace '\s','' -replace '&#10;',''
+            try {
+                $bytes = [Convert]::FromBase64String($b64)
+                for ($i = 0; $i -le $bytes.Length - 16; $i++) {
+                    $dLat = [BitConverter]::ToDouble($bytes, $i)
+                    $dLng = [BitConverter]::ToDouble($bytes, $i + 8)
+                    if ($dLat -lt -3 -and $dLat -gt -35 -and $dLng -lt -30 -and $dLng -gt -75) {
+                        $Lat = "$dLat"; $Lng = "$dLng"; break
+                    }
                 }
-            }
-        } catch { }
+            } catch { }
+        }
+    }
+    if (-not $CityId) {
+        $routeXml = (& $adb shell su -c "cat '/data/data/$PKG/shared_prefs/routing_location_cache.xml'" 2>$null) -join ""
+        if ($routeXml -match 'lCity[^>]*>([^<]+)<') { $CityId = $Matches[1].Trim() }
     }
 }
-if (-not $CityId) {
-    $routeXml = (& $adb shell su -c "cat '/data/data/$PKG/shared_prefs/routing_location_cache.xml'" 2>$null) -join ""
-    if ($routeXml -match 'lCity[^>]*>([^<]+)<') { $CityId = $Matches[1].Trim() }
-}
+Remove-Item $tmpAddr -ErrorAction SilentlyContinue
 if (-not $PointId -and $Lat -and $Lng) { $PointId = "${Lat}_${Lng}" }
 Step "Coords: lat=$Lat  lng=$Lng  cityId=$CityId  point_id=$PointId"
 
@@ -123,10 +148,14 @@ python "$HERE\consolidate.py" "$HERE" "$Lat" "$Lng" "$CityId"
 Write-Host ""
 Step "PRONTO -> $HERE\restaurantes.json  e  restaurantes_full.json"
 
-# 10) envia pro Tinybird
+# 10) envia pro Tinybird (ou gera preview com -DryRun)
 if ($Lat -and $Lng) {
-    Step "Enviando pro Tinybird..."
-    & "$HERE\tinybird_send.ps1" -HeapPath "$HERE\heap_all.jsonl" -DeviceId $DeviceId -PointId $PointId -Lat $Lat -Lng $Lng -CityId $CityId -PoiId $PoiId
+    if ($DryRun) { Step "DRY-RUN: gerando preview do payload (sem enviar)..." }
+    else         { Step "Enviando pro Tinybird..." }
+    & "$HERE\tinybird_send.ps1" -HeapPath "$HERE\heap_all.jsonl" -DeviceId $DeviceId `
+        -PointId $PointId -Lat $Lat -Lng $Lng -CityId $CityId -PoiId $PoiId `
+        -City $City -AddressAll $AddressAll -Neighborhood $Neighborhood -County $County `
+        -CountryCode $CountryCode -DryRun:$DryRun
     Step "tinybird_send concluido (exit=$LASTEXITCODE)"
 } else {
     Write-Host "[!] Coords ausentes - tinybird_send pulado." -ForegroundColor Yellow

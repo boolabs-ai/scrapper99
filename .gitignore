@@ -8,6 +8,12 @@ frida-server-*.xz
 # ── Dump bruto da heap (acumulador gerado a cada execução) ────────────
 heap_all.jsonl
 
+# ── Runtime/debug do crawler (screenshots, dumps, estado de dedup) ─────
+crawler/state/
+_payload_preview.json
+snapshot_99.txt
+collect_99_snapshot.sh
+
 # ── Saídas opcionais / temporários ────────────────────────────────────
 # (restaurantes.json e restaurantes_full.json SÃO versionados como exemplo)
 *.tmp

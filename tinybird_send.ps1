@@ -14,13 +14,22 @@
     .\tinybird_send.ps1 -HeapPath outro.jsonl -DeviceId meu_device
 #>
 param(
-    [string]$HeapPath = '',
-    [string]$DeviceId = '99_food_app',
-    [string]$PointId  = '',
-    [string]$Lat      = '',
-    [string]$Lng      = '',
-    [string]$CityId   = '',
-    [string]$PoiId    = ''
+    [string]$HeapPath      = '',
+    [string]$DeviceId      = '99_food_app',
+    [string]$PointId       = '',
+    [string]$Lat           = '',
+    [string]$Lng           = '',
+    [string]$CityId        = '',
+    [string]$PoiId         = '',
+    [string]$City          = '',
+    [string]$AddressAll    = '',
+    [string]$Neighborhood  = '',
+    [string]$County        = '',
+    [string]$CountryCode   = 'BR',
+    [string]$PostalCode    = '',
+    [string]$PoiType       = '',
+    [string]$CountyGroupId = '',
+    [switch]$DryRun
 )
 
 $TINYBIRD_URL   = 'https://api.us-east.aws.tinybird.co/v0/events?name=ninenine_events'
@@ -35,7 +44,11 @@ if (-not (Test-Path $HeapPath)) {
 
 # se PointId nao foi passado, monta a partir de Lat_Lng
 if (-not $PointId -and $Lat -and $Lng) { $PointId = "${Lat}_${Lng}" }
-if (-not $PoiId) { $PoiId = $PointId }
+# poiId sintetico (lat_lng) so como ultimo recurso, quando o decode real falhou
+if (-not $PoiId) {
+    Write-Host "[!] PoiId real ausente - usando PointId sintetico (evento geograficamente incompleto)." -ForegroundColor Yellow
+    $PoiId = $PointId
+}
 
 $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
 if (-not $curl) { $curl = "$env:SystemRoot\System32\curl.exe" }
@@ -51,10 +64,27 @@ foreach ($l in $raw) {
 }
 if ($feeds.Count -eq 0) { Write-Host "[!] Nenhuma pagina de feed em $HeapPath" -ForegroundColor Yellow; exit 0 }
 
-# poi: objeto de localizacao embutido no response_body
-$poiJson = ([ordered]@{ poiId = $PoiId; lat = $Lat; lng = $Lng; cityId = $CityId } | ConvertTo-Json -Compress)
+# poi: objeto de localizacao embutido no response_body (espelha o que a app retorna)
+$poiJson = ([ordered]@{
+    poiId         = $PoiId
+    lat           = $Lat
+    lng           = $Lng
+    cityId        = $CityId
+    city          = $City
+    addressAll    = $AddressAll
+    neighborhood  = $Neighborhood
+    county        = $County
+    countryCode   = $CountryCode
+    postalCode    = $PostalCode
+    poiType       = $PoiType
+    countyGroupId = $CountyGroupId
+} | ConvertTo-Json -Compress)
 
-Write-Host (">> Enviando {0} paginas  device={1}  lat={2}  lng={3}  cityId={4}" -f $feeds.Count, $DeviceId, $Lat, $Lng, $CityId) -ForegroundColor Cyan
+if ($DryRun) {
+    Write-Host (">> DRY-RUN  device={0}  lat={1}  lng={2}  cityId={3}  poiId={4}" -f $DeviceId, $Lat, $Lng, $CityId, $PoiId) -ForegroundColor Yellow
+} else {
+    Write-Host (">> Enviando {0} paginas  device={1}  lat={2}  lng={3}  cityId={4}" -f $feeds.Count, $DeviceId, $Lat, $Lng, $CityId) -ForegroundColor Cyan
+}
 
 $tmp  = Join-Path $env:TEMP ("tb_99_" + $PID + ".json")
 $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -84,11 +114,19 @@ foreach ($feedRaw in $feeds) {
     }
 
     $payload = [ordered]@{
-        event_type = 'api_request'
+        event_type = 'app_request'
         device_id  = $DeviceId
         point_id   = $PointId
         event_data = $eventData
     } | ConvertTo-Json -Depth 12 -Compress
+
+    # dry-run: grava o payload da 1a pagina pra inspecao e nao envia nada
+    if ($DryRun) {
+        $preview = Join-Path $HERE '_payload_preview.json'
+        [System.IO.File]::WriteAllText($preview, $payload, $utf8)
+        Write-Host ("  [dry-run] payload da pagina 1 gravado em {0} ({1} bytes)" -f $preview, $payload.Length) -ForegroundColor Yellow
+        break
+    }
 
     [System.IO.File]::WriteAllText($tmp, $payload, $utf8)
 
@@ -111,4 +149,6 @@ foreach ($feedRaw in $feeds) {
 }
 
 Remove-Item $tmp -ErrorAction SilentlyContinue
-Write-Host (">> Concluido: {0} ok, {1} erro." -f $ok, $fail) -ForegroundColor Cyan
+if (-not $DryRun) {
+    Write-Host (">> Concluido: {0} ok, {1} erro." -f $ok, $fail) -ForegroundColor Cyan
+}
