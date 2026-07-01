@@ -1,0 +1,13 @@
+# Fila de endereços do crawler 99 — modelo.
+# Copie para crawler/queue.txt (ou outro nome) e rode:
+#   python -m crawler.crawl_99 --queue crawler/queue.txt --delay 60 --resume
+#
+# Formato: uma coordenada por linha   ->   lat,lng[,rótulo]
+#   - linhas vazias e começadas com '#' são ignoradas;
+#   - o 3º campo (rótulo) é opcional, só identifica o ponto nos logs.
+
+# --- Goiânia (exemplo) ---
+-16.6869,-49.2648,Centro
+-16.7050,-49.2700,Setor Bueno
+-16.6750,-49.2550,Setor Leste
+-16.6960,-49.2640,Setor Sul

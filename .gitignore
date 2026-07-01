@@ -14,6 +14,10 @@ _payload_preview.json
 snapshot_99.txt
 collect_99_snapshot.sh
 
+# ── Fila de endereços real do usuário (o template .example é versionado) ─
+crawler/queue.txt
+crawler/*.queue.txt
+
 # ── Saídas opcionais / temporários ────────────────────────────────────
 # (restaurantes.json e restaurantes_full.json SÃO versionados como exemplo)
 *.tmp

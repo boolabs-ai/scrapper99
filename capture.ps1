@@ -21,7 +21,7 @@ param(
     [string]$PoiId           = '',
     [string]$PointId         = '',
     [string]$DeviceId        = '99_food_app',
-    [int]$Cycles             = 8,
+    [int]$Cycles             = 12,
     [int]$SwipesPerCycle     = 6,
     [int]$ScanSeconds        = 10,
     [switch]$DryRun
@@ -47,19 +47,30 @@ $apid = "$(& $adb shell pidof $PKG 2>$null)".Trim()
 if (-not $apid) { Write-Error "App $PKG nao esta rodando (o crawler deveria ter aberto)."; exit 1 }
 Step "pid=$apid  ponto lat=$Lat lng=$Lng"
 
-# 3) dimensoes p/ swipe
+# 3) dimensoes p/ swipe — scroll forte mas CONTROLADO (rola muito sem virar tap/travar)
 $w = 1080; $h = 2400
 $size = (& $adb shell wm size 2>$null)
 if ($size -match '(\d+)x(\d+)') { $w = [int]$Matches[1]; $h = [int]$Matches[2] }
-$x = [int]($w * 0.5); $y1 = [int]($h * 0.72); $y2 = [int]($h * 0.28)
+$x = [int]($w * 0.5); $y1 = [int]($h * 0.85); $y2 = [int]($h * 0.15)
+
+# garante que estamos no feed da home; se um swipe entrou num restaurante/overlay, volta.
+function Ensure-Feed {
+    $foc = (& $adb shell dumpsys window 2>$null | Select-String 'mCurrentFocus')
+    if ("$foc" -notmatch 'MainActivityImplV2') {
+        & $adb shell input keyevent KEYCODE_BACK 2>$null
+        Start-Sleep -Milliseconds 1500
+    }
+}
 
 # 4) zera acumulador e roda loop scroll + heap-scan
 & $adb shell su -c "rm -f $HEAP" 2>$null
 Step "loop: $Cycles ciclos x $SwipesPerCycle swipes"
 for ($c = 1; $c -le $Cycles; $c++) {
+    Ensure-Feed   # se o ciclo anterior caiu num restaurante/overlay, volta pro feed
     for ($s = 1; $s -le $SwipesPerCycle; $s++) {
-        & $adb shell input swipe $x $y1 $x $y2 450 2>$null
-        Start-Sleep -Milliseconds 1000
+        & $adb shell input swipe $x $y1 $x $y2 420 2>$null   # 420ms = scroll forte, NAO vira tap
+        Start-Sleep -Milliseconds 900
+        if (($s % 3) -eq 0) { Ensure-Feed }   # checa no meio do ciclo tambem
     }
     $argline = '-H 127.0.0.1:2222 -q -p {0} -l "{1}\hook_feed.js"' -f $apid, $HERE
     $proc = Start-Process -FilePath "frida" -ArgumentList $argline -PassThru -WindowStyle Hidden
